@@ -45,7 +45,7 @@ import com.shilapi.xcertplay.network.ManualHotspotManager
 import com.shilapi.xcertplay.network.WifiP2pGroupManager
 import com.shilapi.xcertplay.network.WirelessHotspotInfo
 import com.shilapi.xcertplay.network.WirelessHotspotManager
-import com.shilapi.xcertplay.network.mfiCertificateWifiP2pSsid
+import com.shilapi.xcertplay.network.mfiCertificateWifiP2pCredentials
 import com.shilapi.xcertplay.transport.BlockingDuplexByteStream
 import com.shilapi.xcertplay.transport.BluetoothRfcommDuplexStream
 import com.shilapi.xcertplay.transport.Ch341DeviceMatcher
@@ -1489,12 +1489,14 @@ class CarPlayController(
             config.wirelessHotspotMode
         }
         val manager: WirelessHotspotManager = when (hotspotMode) {
-            WirelessHotspotMode.WIFI_P2P -> WifiP2pGroupManager(
-                context = appContext,
-                networkName = mfiCertificateWifiP2pSsid(
-                    mfi.readCertificate(),
-                ),
-            )
+            WirelessHotspotMode.WIFI_P2P ->
+                mfiCertificateWifiP2pCredentials(mfi.readCertificate()).let { credentials ->
+                    WifiP2pGroupManager(
+                        context = appContext,
+                        networkName = credentials.ssid,
+                        passphrase = credentials.passphrase,
+                    )
+                }
             WirelessHotspotMode.LOCAL_ONLY_HOTSPOT -> LocalOnlyHotspotManager(appContext)
             WirelessHotspotMode.MANUAL -> ManualHotspotManager(
                 context = appContext,

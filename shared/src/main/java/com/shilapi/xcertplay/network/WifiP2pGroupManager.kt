@@ -19,23 +19,30 @@ import java.net.NetworkInterface
 import java.net.SocketException
 import java.net.UnknownHostException
 import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
-internal fun mfiCertificateWifiP2pSsid(certificate: ByteArray): String {
+internal data class WifiP2pCredentials(
+    val ssid: String,
+    val passphrase: String,
+)
+
+internal fun mfiCertificateWifiP2pCredentials(certificate: ByteArray): WifiP2pCredentials {
     require(certificate.isNotEmpty()) { "MFi certificate must not be empty" }
     val digest = MessageDigest.getInstance("SHA-1").digest(certificate)
-    val suffix = buildString(MFI_CERTIFICATE_SSID_SUFFIX_LENGTH) {
-        for (byte in digest.take(MFI_CERTIFICATE_SSID_SUFFIX_LENGTH / 2)) {
+    val digestHex = buildString(digest.size * 2) {
+        for (byte in digest) {
             val value = byte.toInt() and 0xff
             append(HEX_DIGITS[value ushr 4])
             append(HEX_DIGITS[value and 0x0f])
         }
     }
-    return WIFI_P2P_SSID_PREFIX + suffix
+    return WifiP2pCredentials(
+        ssid = WIFI_P2P_SSID_PREFIX + digestHex.take(MFI_CERTIFICATE_SSID_SUFFIX_LENGTH),
+        passphrase = digestHex.takeLast(MFI_CERTIFICATE_PASSPHRASE_LENGTH),
+    )
 }
 
 /**
@@ -46,12 +53,12 @@ internal fun mfiCertificateWifiP2pSsid(certificate: ByteArray): String {
 class WifiP2pGroupManager(
     context: Context,
     private val networkName: String,
+    private val passphrase: String,
 ) : WirelessHotspotManager {
     private val appContext = context.applicationContext
     private val p2pManager = appContext.getSystemService(WifiP2pManager::class.java)
         ?: throw IllegalStateException("WifiP2pManager is unavailable")
     private val stateLock = Object()
-    private val random = SecureRandom()
 
     private var channel: WifiP2pManager.Channel? = null
     private var callbackThread: HandlerThread? = null
@@ -80,10 +87,7 @@ class WifiP2pGroupManager(
         val thread = HandlerThread("xcertplay-wifi-p2p").apply { start() }
         attempt.thread = thread
         val deadlineNanos = deadlineAfter(timeoutMillis)
-        val credentials = Credentials(
-            ssid = networkName,
-            passphrase = randomToken(16),
-        )
+        val credentials = WifiP2pCredentials(networkName, passphrase)
 
         try {
             val p2pChannel = p2pManager.initialize(
@@ -226,7 +230,7 @@ class WifiP2pGroupManager(
     private fun awaitUsableGroup(
         attempt: StartAttempt,
         channel: WifiP2pManager.Channel,
-        credentials: Credentials,
+        credentials: WifiP2pCredentials,
         deadlineNanos: Long,
         timeoutMillis: Long,
     ): WirelessHotspotInfo {
@@ -386,13 +390,6 @@ class WifiP2pGroupManager(
         }
     }
 
-    private fun randomToken(length: Int): String =
-        buildString(length) {
-            repeat(length) {
-                append(TOKEN_ALPHABET[random.nextInt(TOKEN_ALPHABET.length)])
-            }
-        }
-
     private fun ensureStartActive(attempt: StartAttempt) {
         synchronized(stateLock) {
             ensureStartActiveLocked(attempt)
@@ -495,21 +492,15 @@ class WifiP2pGroupManager(
         var stopped = false
     }
 
-    private class Credentials(
-        val ssid: String,
-        val passphrase: String,
-    )
-
     private companion object {
         const val TAG = "xcertplay-usb"
         const val NANOS_PER_MILLISECOND = 1_000_000L
         const val REMOVE_GROUP_TIMEOUT_MILLIS = 2_000L
         val REQUEST_POLL_NANOS: Long = TimeUnit.MILLISECONDS.toNanos(500)
-        const val TOKEN_ALPHABET =
-            "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
     }
 }
 
 private const val WIFI_P2P_SSID_PREFIX = "DIRECT-xcertplay"
 private const val MFI_CERTIFICATE_SSID_SUFFIX_LENGTH = 4
+private const val MFI_CERTIFICATE_PASSPHRASE_LENGTH = 8
 private const val HEX_DIGITS = "0123456789abcdef"
